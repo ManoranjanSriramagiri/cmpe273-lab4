@@ -1,23 +1,20 @@
 package edu.sjsu.cmpe.cache.client;
 
-import java.util.concurrent.Future;
-
 import com.mashape.unirest.http.HttpResponse;
 import com.mashape.unirest.http.JsonNode;
 import com.mashape.unirest.http.Unirest;
 import com.mashape.unirest.http.async.Callback;
 import com.mashape.unirest.http.exceptions.UnirestException;
 
+import java.util.concurrent.Future;
+
 /**
  * Distributed cache service
- * 
+ * Created by  Manoranjan.
  */
 public class DistributedCacheService implements CacheServiceInterface {
     private final String cacheServerUrl;
-    int Totalcount=0;
-    String Cachevalue="";
-    
-    
+
     public DistributedCacheService(String serverUrl) {
         this.cacheServerUrl = serverUrl;
     }
@@ -27,38 +24,36 @@ public class DistributedCacheService implements CacheServiceInterface {
      */
     @Override
     public String get(long key) {
-        Future<HttpResponse<JsonNode>> response = null;
-            response = Unirest.get(this.cacheServerUrl + "/cache/{key}")
-                    .header("accept", "application/json")
-                    .routeParam("key", Long.toString(key)).asJsonAsync(new Callback<JsonNode>() {
-                    	
-    		            public void completed(HttpResponse<JsonNode> response) {
-    		            	Cachevalue=response.getBody().getObject().getString("value");
-    		            }
+        Future<HttpResponse<JsonNode>> future = Unirest.get(cacheServerUrl + "/cache/{key}")
+                .header("accept", "application/json")
+                .routeParam("key", Long.toString(key))
+                .asJsonAsync(new Callback<JsonNode>() {
+                    public void failed(UnirestException e) {
+                        System.out.println(e.getMessage());
+                        CRDTClient.readLatch.countDown();
+                    }
 
-    					@Override
-    					public void cancelled() {
-    						// TODO Auto-generated method stub
-    						
-    					}
+                    public void completed(HttpResponse<JsonNode> response) {
+                        if(response.getCode() == 200) {
+                            String value = response.getBody().getObject().getString("value");
+                            Integer count = 1;
+                            if (CRDTClient.readCounts.containsKey(value)) {
+                                count = CRDTClient.readCounts.get(value) + 1;
+                            }
+                            CRDTClient.readCounts.put(value, count);
+                            CRDTClient.readLatch.countDown();
+                        } else {
+                            CRDTClient.readLatch.countDown();
+                        }
+                    }
 
-    					@Override
-    					public void failed(UnirestException arg0) {
-    						// TODO Auto-generated method stub
-    						
-    					}
+                    public void cancelled() {
+                        System.out.println("The request has been cancelled");
+                        CRDTClient.readLatch.countDown();
+                    }
 
-    		        });
-
-        try {
-			Thread.sleep(500);
-		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-       // String value = response.getBody().getObject().getString("value");
-
-        return Cachevalue;
+                });
+        return "";
     }
 
     /**
@@ -66,54 +61,47 @@ public class DistributedCacheService implements CacheServiceInterface {
      *      java.lang.String)
      */
     @Override
-    public int put(long key, String value) {
-    	Future<HttpResponse<JsonNode>> response = null;
-            response = Unirest
-                    .put(this.cacheServerUrl + "/cache/{key}/{value}")
-                    .header("accept", "application/json")
-                    .routeParam("key", Long.toString(key))
-                    .routeParam("value", value).asJsonAsync(new Callback<JsonNode>() {
-                    	
-    		            public void completed(HttpResponse<JsonNode> response) {
-    		            	Totalcount=1;
-    		            }
-    					@Override
-    					public void cancelled() {
-    						// TODO Auto-generated method stub	
-    					}
-    					@Override
-    					public void failed(UnirestException arg0) {
-    						// TODO Auto-generated method stub	
-    					}
-    		        });
-            try {
-				Thread.sleep(500);
-			} catch (InterruptedException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-        return Totalcount;
-    }
-    @Override
-    public void delete(long key) {
-        Future<HttpResponse<JsonNode>> response = null;
-        response = Unirest
-		        .delete(this.cacheServerUrl + "/cache/{key}")
-		        .header("accept", "application/json")
-		        .routeParam("key", Long.toString(key)).asJsonAsync(new Callback<JsonNode>() {
-		        	
-		            public void completed(HttpResponse<JsonNode> response) {
-		                 //System.out.println("in delete");
-		            }
-					@Override
-					public void cancelled() {
-						// TODO Auto-generated method stub
-					}
+    public void put(long key, String value) {
+        Future<HttpResponse<JsonNode>> future = Unirest.put(cacheServerUrl + "/cache/{key}/{value}")
+                .header("accept", "application/json")
+                .routeParam("key", Long.toString(key))
+                .routeParam("value", value)
+                .asJsonAsync(new Callback<JsonNode>() {
 
-					@Override
-					public void failed(UnirestException arg0) {
-						// TODO Auto-generated method stub	
-					}
-		        });
+                    public void failed(UnirestException e) {
+                        System.out.println(e.getMessage());
+                        CRDTClient.writeLatch.countDown();
+                    }
+
+                    public void completed(HttpResponse<JsonNode> response) {
+                        CRDTClient.writeSuccesses.incrementAndGet();
+                        CRDTClient.writeLatch.countDown();
+                    }
+
+                    public void cancelled() {
+                        System.out.println("The request has been cancelled");
+                        CRDTClient.writeLatch.countDown();
+                    }
+
+                });
+    }
+
+    public void delete(long key) {
+        Future<HttpResponse<JsonNode>> future = Unirest.delete(cacheServerUrl + "/cache/{key}")
+                .routeParam("key", Long.toString(key))
+                .asJsonAsync(new Callback<JsonNode>() {
+
+                    public void failed(UnirestException e) {
+                        System.out.println(e.getMessage());
+                    }
+
+                    public void completed(HttpResponse<JsonNode> response) {
+                    }
+
+                    public void cancelled() {
+                        System.out.println("The request has been cancelled!");
+                    }
+
+                });
     }
 }

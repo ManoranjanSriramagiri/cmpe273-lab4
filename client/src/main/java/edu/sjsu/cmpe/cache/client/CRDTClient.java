@@ -1,54 +1,73 @@
 package edu.sjsu.cmpe.cache.client;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * Created by  Manoranjan on 5/22/15.
+ */
 public class CRDTClient {
-	
-	CacheServiceInterface cache1 = new DistributedCacheService("http://localhost:3000");
-    CacheServiceInterface cache2 = new DistributedCacheService("http://localhost:3001");
-    CacheServiceInterface cache3 = new DistributedCacheService("http://localhost:3002");
-    
-    public void putCacheClient(long key,String value)
-    {
-    	if(cache1.put(key,value)+cache2.put(key,value)+cache3.put(key,value)>=2)
-    	{
-    		System.out.println("Insertion Successful**");
-    	}
-    	else
-    	{
-    		System.out.println(" Rollback**");
-    		cache1.delete(key);
-    		cache2.delete(key);
-    		cache3.delete(key);
-    	}
-    }
-    
-    public void getCacheClient(long key)
-    {
-    	String v1=cache1.get(key);
-    	String v2=cache2.get(key);
-    	String v3=cache3.get(key);
-    	System.out.println(v1);
-    	if(v1.equals(v2) && v2.equals(v3) && v3.equals(v1))
-    	{
-    		System.out.println("*****************Successful Consistent State*****************");
-    	}
-    	else
-    	{
-    		if(v1.equals(v2))
-    		{
-    			cache3.put(key,v1);
-    			System.out.println("**Consistent State of cache3 changed and set equal to 1 & 2 servers **");
-    		}
-    		else if(v2.equals(v3))
-    		{
-    			cache1.put(key,v2);
-    			System.out.println("**Consistent State of cache1 changed and set equal to 2 & 3 servers **");
-    		}
-    		else if(v3.equals(v1))
-    		{
-    			cache2.put(key,v1);
-    			System.out.println("Consistent State of cache2 changed and set equal to 1 & 3 servers **");
-    		}
-    	}
+    public List<CacheServiceInterface> caches;
+    public int writeSuccessCount;
+
+    public static CountDownLatch writeLatch;
+    public static CountDownLatch readLatch;
+    public static AtomicInteger writeSuccesses;
+    public static HashMap<String, Integer> readCounts;
+
+    public CRDTClient(List<CacheServiceInterface> caches, int writeSuccessCount) {
+        this.caches = caches;
+        this.writeSuccessCount = writeSuccessCount;
     }
 
+    public boolean put(long key, String value) {
+        writeLatch = new CountDownLatch(caches.size());
+        writeSuccesses = new AtomicInteger();
+
+        for(CacheServiceInterface cache : caches) {
+            cache.put(key, value);
+        }
+
+        try {
+            writeLatch.await();
+        } catch (InterruptedException e) {
+            System.err.println(e.getMessage());
+        }
+        if(writeSuccesses.get() < writeSuccessCount) {
+            System.out.println("Write failed");
+            for(CacheServiceInterface cache : caches) {
+                cache.delete(key);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    public String get(long key) {
+        readLatch = new CountDownLatch(caches.size());
+        readCounts = new HashMap<String, Integer>();
+
+        for(CacheServiceInterface cache : caches) {
+            cache.get(key);
+        }
+
+        try {
+            readLatch.await();
+        } catch (InterruptedException e) {
+            System.err.println(e.getMessage());
+        }
+
+        String correctValue = "";
+        int maxCount = 0;
+        for(String value : readCounts.keySet()) {
+            if(readCounts.get(value) > maxCount) {
+                correctValue = value;
+                maxCount = readCounts.get(value);
+            }
+        }
+        this.put(key, correctValue);
+        return correctValue;
+    }
 }
